@@ -195,6 +195,7 @@ jobs:
           NODE_VERSION: ${{ env.NODE_VERSION }}
           BUILD_ARCH: ${{ env.BUILD_ARCH }}
           BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           echo "📦 Preparing to commit and push artifact (non-blocking)..."
