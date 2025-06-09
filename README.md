@@ -1,1 +1,1 @@
-# openwrtx86-node.js
+# openwrt-x86-node.js
