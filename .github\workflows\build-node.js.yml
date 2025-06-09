@@ -1,0 +1,228 @@
+name: Build Node.js for OpenWrt (APK Format)
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: "Node.js version (choose: 20, 22, 24)"
+        required: true
+        default: "20"
+      build_arch:
+        description: "Target architecture (choose: x86_64 or aarch64)"
+        required: true
+        default: "x86_64"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NODE_VERSION: ${{ github.event.inputs.node_version }}
+      BUILD_ARCH: ${{ github.event.inputs.build_arch }}
+      RELEASE_TAG: node-v${{ github.event.inputs.node_version }}-${{ github.event.inputs.build_arch }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Inputs
+        run: |
+          case "$NODE_VERSION" in
+            20|22|24) echo "✅ Valid Node.js version: $NODE_VERSION" ;;
+            *) echo "❌ Invalid Node.js version: $NODE_VERSION" && exit 1 ;;
+          esac
+
+          case "$BUILD_ARCH" in
+            x86_64|aarch64) echo "✅ Valid target architecture: $BUILD_ARCH" ;;
+            *) echo "❌ Invalid target architecture: $BUILD_ARCH" && exit 1 ;;
+          esac
+
+      - name: Clone OpenWrt
+        run: git clone --depth=1 https://github.com/openwrt/openwrt.git
+
+      - name: Add Node.js Feed
+        working-directory: openwrt
+        run: |
+          echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a -p node
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gperf unzip \
+            libncurses5-dev zlib1g-dev libssl-dev python3 python3-pip rsync subversion git wget file \
+            libelf-dev ccache jq lua5.1 luarocks
+          pip3 install --user meson ninja
+          sudo luarocks install luafilesystem          
+          
+      - name: Prepare OpenWrt Config
+        working-directory: openwrt
+        run: |
+          case "$BUILD_ARCH" in
+            x86_64)
+              TARGET="x86"
+              SUBTARGET="64"
+              DEVICE="generic"
+              ;;
+            aarch64)
+              TARGET="armvirt"
+              SUBTARGET="64"
+              DEVICE="generic"
+              ;;
+          esac
+
+          echo "✅ Target: $TARGET / $SUBTARGET / $DEVICE"
+
+          cat <<EOF > .config
+          CONFIG_TARGET_${TARGET}=y
+          CONFIG_TARGET_${TARGET}_${SUBTARGET}=y
+          CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${DEVICE}=y
+          CONFIG_PACKAGE_node=y
+          CONFIG_NODEJS_${NODE_VERSION}=y
+          CONFIG_USE_APK=y
+          CONFIG_PACKAGE_apk-mbedtls=y
+          CONFIG_PACKAGE_openwrt-keyring=y
+          EOF
+
+          make defconfig
+
+      - name: Build tools and toolchain
+        working-directory: openwrt
+        run: |
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
+          
+      - name: Build openwrt-keyring package
+        working-directory: openwrt
+        run: make package/system/openwrt-keyring/compile V=s
+        
+      - name: Build Toolchain and Node.js
+        working-directory: openwrt
+        run: |
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
+          make package/feeds/node/node/compile -j$(nproc) V=s
+
+      - name: Collect Build Artifacts (.apk + pem)
+        run: |
+          set -euo pipefail
+          mkdir -p output/apk output/keys
+
+          copy_with_unique_name() {
+            src_file="$1"
+            base_name=$(basename "$src_file")
+            dest_dir="output/keys"
+            dest_file="${dest_dir}/${base_name}"
+
+            if [ -e "$dest_file" ]; then
+              name="${base_name%.*}"
+              ext="${base_name##*.}"
+              counter=1
+              while [ -e "${dest_dir}/${name}-${counter}.${ext}" ]; do
+                counter=$((counter + 1))
+              done
+              dest_file="${dest_dir}/${name}-${counter}.${ext}"
+            fi
+
+            cp "$src_file" "$dest_file"
+          }
+          
+          # Copy from node.apk
+          find openwrt/bin/ -type f -name "node*.apk" -exec cp {} output/apk/ \;
+
+          # Copy from openwrt root
+          find openwrt -maxdepth 1 -type f \( -name "*.pem" -o -name "*.key" \) | while read -r file; do
+            copy_with_unique_name "$file"
+          done
+
+          # Copy from build dirs
+          candidate_dirs=(
+            openwrt/build_dir/target-*/openwrt-keyring-*/apk/
+            openwrt/build_dir/target-*/root-*/etc/apk/keys/
+            openwrt/build_dir/target-*/root.orig-*/etc/apk/keys/
+          )
+
+           for pattern in "${candidate_dirs[@]}"; do
+            for dir in $pattern; do
+              if [ -d "$dir" ]; then
+                find "$dir" -type f \( -name "*.pem" -o -name "*.key" \) | while read -r file; do
+                  copy_with_unique_name "$file"
+                done
+              fi
+            done
+          done
+          
+          # log
+          echo "📋 Saved PEM files:"
+          find output/keys -type f
+
+          # output
+          cd output
+          tar -czvf node-apk-${BUILD_ARCH}-v${NODE_VERSION}.tar.gz apk
+
+          #  No apk keys found, skipping keys archive
+          if [ "$(ls -A keys 2>/dev/null)" ]; then
+            tar -czvf node-apk-keys.tar.gz keys
+          else
+            echo "⚠️ No apk keys found, skipping keys archive"
+          fi
+
+      - name: Install GitHub CLI
+        run: sudo apt install -y gh
+
+      - name: Create GitHub Release (if not exists)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if ! gh release view "$RELEASE_TAG"; then
+            gh release create "$RELEASE_TAG" \
+              --title "Node.js $NODE_VERSION (OpenWrt ${BUILD_ARCH} APK)" \
+              --notes "Precompiled Node.js v$NODE_VERSION for OpenWrt (${BUILD_ARCH}, .apk)"
+          fi
+
+      - name: Upload Release Artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh release upload "$RELEASE_TAG" output/node-apk-${BUILD_ARCH}-v${NODE_VERSION}.tar.gz --clobber
+          if [ -f output/node-apk-keys.tar.gz ]; then
+            gh release upload "$RELEASE_TAG" output/node-apk-keys.tar.gz --clobber
+          fi
+
+      - name: Commit and Push Artifact to Repository Directory
+        env:
+          NODE_VERSION: ${{ env.NODE_VERSION }}
+          BUILD_ARCH: ${{ env.BUILD_ARCH }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "📦 Preparing to commit and push artifact (non-blocking)..."
+          (
+          set -e
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          FILE_NAME="node-apk-${BUILD_ARCH}-v${NODE_VERSION}.tar.gz"
+          FILE_PATH="node-js/${FILE_NAME}"
+
+          mkdir -p node-js
+          cp "output/${FILE_NAME}" "${FILE_PATH}"
+
+          git fetch origin "${BRANCH}"
+          git checkout "${BRANCH}"
+
+          git add "${FILE_PATH}"
+          if git diff --cached --quiet; then
+            echo "ℹ️ No changes to commit."
+          else
+            git commit -m "Add Node.js v${NODE_VERSION} APK artifact for ${BUILD_ARCH}"
+            
+            # Configure remote URL with PAT
+            git remote set-url origin https://${GH_TOKEN}@github.com/bauw2008/openwrtx86-node.js.git
+            
+            git push origin "${BRANCH}"
+            echo "✅ Artifact committed to repo at ${FILE_PATH}"
+          fi
+          ) || echo "⚠️ Git push failed, but continuing build..."
