@@ -220,7 +220,7 @@ jobs:
             git commit -m "Add Node.js v${NODE_VERSION} APK artifact for ${BUILD_ARCH}"
             
             # Configure remote URL with PAT
-            git remote set-url origin https://${GH_TOKEN}@github.com/bauw2008/openwrtx86-node.js.git
+            git remote set-url origin https://${GH_TOKEN}@github.com/bauw2008/openwrt-node.git
             
             git push origin "${BRANCH}"
             echo "✅ Artifact committed to repo at ${FILE_PATH}"
