@@ -1,57 +1,53 @@
-name: Test Commit and Push with PAT
+name: Test Commit and Push
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-push:
+  commit-and-push:
     runs-on: ubuntu-latest
     env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
       BRANCH: main
-      GH_TOKEN: ${{ secrets.GH_PAT }}   # 你的 PAT secret 名称
-
+      NODE_VERSION: 18.16.0
+      BUILD_ARCH: amd64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0        # 拉取完整历史
+          persist-credentials: false  # 不使用默认的 GITHUB_TOKEN 凭证
 
-      - name: Show git remote before change
-        run: git remote -v
-
-      - name: Test commit and push with PAT
+      - name: Prepare and commit test file
         run: |
           set -euo pipefail
-          echo "📦 Starting test commit and push..."
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          echo "📝 Creating test file..."
-          echo "test content $(date)" > test.txt
+          echo "Starting test commit and push..."
+          echo "Creating test file..."
+          echo "This is a test file created by GitHub Actions." > test.txt
           ls -l test.txt
 
-          echo "🔄 Fetching latest branch ${BRANCH}..."
+          echo "Fetching latest branch ${BRANCH}..."
           git fetch origin "${BRANCH}"
           git checkout "${BRANCH}"
 
-          echo "➕ Adding test.txt to staging..."
+          echo "Adding test.txt to staging..."
           git add test.txt
 
           if git diff --cached --quiet; then
-            echo "ℹ️ No changes to commit."
+            echo "No changes to commit."
           else
-            echo "✅ Changes detected. Committing..."
+            echo "Changes detected, committing..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
             git commit -m "Test commit: add test.txt from GitHub Actions"
+
+            echo "Setting remote URL with PAT..."
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+            
+            echo "Remote URLs after update:"
+            git remote -v
+            
+            echo "Pushing to ${BRANCH}..."
+            git push origin "${BRANCH}"
+            echo "Push succeeded."
           fi
-
-          echo "🔗 Setting remote URL with PAT..."
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/bauw2008/openwrt-node.git"
-
-          echo "📢 Remote URLs after update:"
-          git remote -v
-
-          echo "🚀 Pushing to ${BRANCH}..."
-          git push origin "${BRANCH}"
-
-          echo "✅ Push completed successfully!"
