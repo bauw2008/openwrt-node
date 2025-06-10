@@ -1,4 +1,4 @@
-name: Test Commit and Push
+name: Test Commit and Push with PAT
 
 on:
   workflow_dispatch:
@@ -6,51 +6,52 @@ on:
 jobs:
   test-push:
     runs-on: ubuntu-latest
+    env:
+      BRANCH: main
+      GH_TOKEN: ${{ secrets.GH_PAT }}   # 你的 PAT secret 名称
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      - name: Commit and Push Test File to Repository Directory
-        env:
-          BRANCH: ${{ github.ref_name }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+      - name: Show git remote before change
+        run: git remote -v
+
+      - name: Test commit and push with PAT
         run: |
           set -euo pipefail
           echo "📦 Starting test commit and push..."
 
-          (
-            set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-            echo "🔧 Configuring git user..."
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "📝 Creating test file..."
+          echo "test content $(date)" > test.txt
+          ls -l test.txt
 
-            TEST_FILE="test.txt"
-            echo "This is a test file created by GitHub Actions at $(date)" > "${TEST_FILE}"
-            echo "📝 Created test file: ${TEST_FILE}"
-            ls -l "${TEST_FILE}"
+          echo "🔄 Fetching latest branch ${BRANCH}..."
+          git fetch origin "${BRANCH}"
+          git checkout "${BRANCH}"
 
-            echo "🔄 Fetching latest branch ${BRANCH}..."
-            git fetch origin "${BRANCH}"
-            git checkout "${BRANCH}"
+          echo "➕ Adding test.txt to staging..."
+          git add test.txt
 
-            echo "➕ Adding ${TEST_FILE} to staging..."
-            git add "${TEST_FILE}"
+          if git diff --cached --quiet; then
+            echo "ℹ️ No changes to commit."
+          else
+            echo "✅ Changes detected. Committing..."
+            git commit -m "Test commit: add test.txt from GitHub Actions"
+          fi
 
-            if git diff --cached --quiet; then
-              echo "ℹ️ No changes to commit."
-            else
-              echo "✅ Changes detected. Committing..."
-              git commit -m "Test commit: add ${TEST_FILE} from GitHub Actions"
+          echo "🔗 Setting remote URL with PAT..."
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/bauw2008/openwrt-node.git"
 
-              echo "🔗 Setting remote URL with PAT..."
-              git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/bauw2008/openwrt-node.git"
+          echo "📢 Remote URLs after update:"
+          git remote -v
 
-              echo "🚀 Pushing to ${BRANCH}..."
-              git push origin "${BRANCH}"
-              echo "🎉 Push completed successfully!"
-            fi
-          ) || echo "⚠️ Git push failed, but continuing build anyway."
+          echo "🚀 Pushing to ${BRANCH}..."
+          git push origin "${BRANCH}"
 
-          echo "✅ Script finished."
+          echo "✅ Push completed successfully!"
