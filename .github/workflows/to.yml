@@ -1,0 +1,50 @@
+- name: Commit and Push Test File to Repository Directory
+  env:
+    BRANCH: ${{ github.ref_name }}
+    GH_TOKEN: ${{ secrets.GH_PAT }}
+  run: |
+    set -euo pipefail
+    echo "📦 Starting test commit and push..."
+
+    (
+      set -e
+
+      # 配置 Git 用户信息
+      echo "🔧 Configuring git user..."
+      git config user.name "github-actions[bot]"
+      git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 创建一个测试文件
+      TEST_FILE="test.txt"
+      echo "This is a test file created by GitHub Actions at $(date)" > "${TEST_FILE}"
+      echo "📝 Created test file: ${TEST_FILE}"
+      ls -l "${TEST_FILE}"
+
+      # 确保分支同步最新
+      echo "🔄 Fetching latest branch ${BRANCH}..."
+      git fetch origin "${BRANCH}"
+      git checkout "${BRANCH}"
+
+      # 添加文件到暂存区
+      echo "➕ Adding ${TEST_FILE} to staging..."
+      git add "${TEST_FILE}"
+
+      # 检查是否有改动
+      if git diff --cached --quiet; then
+        echo "ℹ️ No changes to commit."
+      else
+        echo "✅ Changes detected. Committing..."
+        git commit -m "Test commit: add ${TEST_FILE} from GitHub Actions"
+
+        # 配置 remote URL 使用 PAT
+        echo "🔗 Setting remote URL with PAT..."
+        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/bauw2008/openwrt-node.git"
+
+        # 执行 push
+        echo "🚀 Pushing to ${BRANCH}..."
+        git push origin "${BRANCH}"
+        echo "🎉 Push completed successfully!"
+      fi
+    ) || echo "⚠️ Git push failed, but continuing build anyway."
+
+    echo "✅ Script finished."
