@@ -98,7 +98,14 @@ jobs:
       - name: Build openwrt-keyring package
         working-directory: openwrt
         run: make package/system/openwrt-keyring/compile V=s
-        
+      
+      - name: Inject Fixed APK Signing Keys
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.APK_PRIV_KEY }}" | base64 -d > openwrt/private-key.pem
+          echo "${{ secrets.APK_PUB_KEY }}" | base64 -d > openwrt/public-key.pem
+          echo "✅ Injected fixed signing keys to openwrt/"
+   
       - name: Build Toolchain and Node.js
         working-directory: openwrt
         run: |
