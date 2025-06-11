@@ -141,7 +141,9 @@ jobs:
           find openwrt/bin/ -type f -name "node*.apk" -exec cp {} output/apk/ \;
 
           # Copy from openwrt root
-          find openwrt -maxdepth 1 -type f \( -name "*.pem" -o -name "*.key" \) | while read -r file; do
+          # find openwrt -maxdepth 1 -type f \( -name "*.pem" -o -name "*.key" \) | while read -r file; do
+          find openwrt -maxdepth 1 -type f \( \( -name "*.pem" -o -name "*.key" \) ! -name "private-key.pem" \) | while read -r file; do
+
             copy_with_unique_name "$file"
           done
 
